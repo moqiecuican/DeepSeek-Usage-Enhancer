@@ -2,7 +2,7 @@
 
 > 油猴脚本 / Tampermonkey 用户脚本，为 [DeepSeek 开放平台](https://platform.deepseek.com/usage) 用量页补全**今日数据**：今日消费、今日用量、各模型今日/昨日请求次数与缓存命中率。注入内容**克隆官方原生卡片样式**，与页面融为一体，以假乱真。
 
-![hero](docs/hero.png)
+![注入+悬浮](docs/注入+悬浮.png)
 
 [![GitHub release](https://img.shields.io/github/v/release/moqiecuican/DeepSeek-Usage-Enhancer)](https://github.com/moqiecuican/DeepSeek-Usage-Enhancer/releases)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -17,6 +17,14 @@
 - **缓存命中率**？——官方页面完全没有这个指标（缓存命中 = 省钱，是 DeepSeek 用户最该盯的数字之一）
 
 这个脚本把「今日数据」直接补进页面，打开就能看到，不用任何操作。
+
+## 效果对比
+
+左边是官方原版，右边是安装脚本后的效果：
+
+| 官方原版 | 网页注入版 |
+|:---:|:---:|
+| ![官方原版](docs/官方原版.png) | ![网页注入版](docs/网页注入版.png) |
 
 ## 功能特性
 
@@ -33,24 +41,22 @@
 | 明暗主题跟随平台 | 自动 | ✅ |
 | 不受 React 重绘影响 | 自动重注入 | 独立 DOM |
 
-两个版本功能互补，**选一个安装即可**，也可以同时安装。
+两个版本功能互补，**选一个安装即可**，也可以同时安装（如上图同屏效果）。
 
 ### 页面注入版（DeepSeek-Usage-Enhancer.js）
 
 数据直接注入页面原生布局，与官方 UI 完全一致：
 
-- **今日消费 / 今日用量** 两张卡片，以官方卡片区末尾独立一行呈现
+- **今日消费 / 今日用量** 两张卡片，紧邻官方锚点卡插入（今日消费→消费金额旁，今日用量→Tokens 旁）
 - 每个模型的图表卡下方追加 **昨日 / 今日** 请求次数与 **缓存命中率** 行
 
-![hero](docs/hero.png)
-
-![models](docs/models.png)
+![网页注入版](docs/网页注入版.png)
 
 ### 悬浮面板版（deepseek-usage-monitor.js)
 
 右下角悬浮面板，DeepSeek 设计语言（品牌蓝、圆角、跟随明暗主题）：
 
-![panel](docs/panel.png)
+![悬浮窗](docs/悬浮窗.png)
 
 - 今日消费 / 今日用量 / 充值余额 / 赠送余额 / 本月消费
 - 各模型：请求数、Token、缓存命中/未命中/输出、缓存命中率
