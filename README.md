@@ -68,9 +68,12 @@
 1. 安装浏览器扩展：**Tampermonkey（篡改猴）** 或 **Violentmonkey（暴力猴）**
    - Chrome / Edge：应用商店搜索 "Tampermonkey"
    - Firefox：附加组件商店
-2. 打开扩展管理页 → **添加新脚本** → 粘贴对应 `.js` 文件的全部内容 → 保存
-   - 或通过 [Greasy Fork](https://greasyfork.org/zh-CN/)（上架后）一键安装
-3. 打开 [DeepSeek 开放平台用量页](https://platform.deepseek.com/usage)（或从官网"API 开放平台"进入），脚本自动生效
+2. **一键安装**（推荐，点击后油猴会自动弹出安装确认）：
+   - ▶️ [安装「DeepSeek 用量增强」（页面注入版）](https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Enhancer/main/DeepSeek-Usage-Enhancer.user.js)
+   - ▶️ [安装「DeepSeek 用量监控」（悬浮面板版）](https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Enhancer/main/deepseek-usage-monitor.user.js)
+   - 两个版本功能互补，**选一个即可**，也可同时安装
+3. 手动安装：打开扩展管理页 → **添加新脚本** → 粘贴对应 `.js` 文件的全部内容 → 保存
+4. 打开 [DeepSeek 开放平台用量页](https://platform.deepseek.com/usage)（或从官网"API 开放平台"进入），脚本自动生效
 
 > ⚠️ **Chrome 127+ 注意**：首次安装后若脚本不生效，需在 `chrome://extensions` → Tampermonkey → 详情 → 打开「**允许运行用户脚本**」（Allow user scripts）开关，然后重启浏览器。
 
