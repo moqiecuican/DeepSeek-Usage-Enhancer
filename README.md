@@ -1,116 +1,124 @@
-# DeepSeek Usage Enhancer
+# DeepSeek 用量增强（DeepSeek Usage Enhancer）
 
-在 DeepSeek 开放平台用量页面补全**今日数据**——今日消费、请求次数、Token 用量、缓存命中率，并提供图表数字千分位格式化。
+> 油猴脚本 / Tampermonkey 用户脚本，为 [DeepSeek 开放平台](https://platform.deepseek.com/usage) 用量页补全**今日数据**：今日消费、今日用量、各模型今日/昨日请求次数与缓存命中率。注入内容**克隆官方原生卡片样式**，与页面融为一体，以假乱真。
 
----
+![hero](docs/hero.png)
 
-## 背景
-
-打开 [platform.deepseek.com/usage](https://platform.deepseek.com/usage)，官方页面默认只展示**本月累计**数据。想看"今天花了多少钱""今天请求了多少次""缓存命中率是多少"，需要手动点图表柱子、切换日期、自己算。
-
-本项目的脚本帮你自动补齐这些信息。
+[![GitHub release](https://img.shields.io/github/v/release/moqiecuican/DeepSeek-Usage-Enhancer)](https://github.com/moqiecuican/DeepSeek-Usage-Enhancer/releases)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## 两个版本
+## 为什么需要这个脚本
 
-| 版本 | 文件 | 方式 |
-|------|------|------|
-| **页面注入版** | `DeepSeek-Usage-Enhancer.js` | 将数据注入页面原有布局，像原生功能 |
-| **悬浮面板版** | `deepseek-usage-monitor.js` | 独立浮窗展示，可拖拽可折叠 |
+官方用量页默认只展示**本月/近 30 天累计**数据：
 
-两个版本功能相同，选一个安装即可。**功能比较**：
+- 想知道**今天花了多少钱、今天请求了多少次**？——需要手动点图表、切换日期预设、自己加
+- **缓存命中率**？——官方页面完全没有这个指标（缓存命中 = 省钱，是 DeepSeek 用户最该盯的数字之一）
+
+这个脚本把「今日数据」直接补进页面，打开就能看到，不用任何操作。
+
+## 功能特性
 
 | 特性 | 页面注入版 | 悬浮面板版 |
 |------|:---:|:---:|
-| 今日消费 | ✓ | ✓ |
-| 各模型请求数 / Token / 缓存命中率 | ✓ | ✓ |
-| 图表悬停数字千分位 | ✓ | — |
-| 自由拖拽 / 折叠 | — | ✓ |
-| 数值点击切换短格式↔原始值 | — | ✓ |
-| 不受页面 React 重绘影响 | 自动重注入 | 独立 DOM，天然不受影响 |
+| 今日消费卡片（紧邻官方卡片） | ✅ | ✅ |
+| 今日用量（Token 总数）卡片 | ✅ | ✅ |
+| 各模型 今日/昨日 请求次数 | ✅ | — |
+| 各模型 今日 Token 与缓存命中率 | ✅ | ✅ |
+| 账户余额 / 本月消费 / 赠送额度 | — | ✅ |
+| 图表悬停数字千分位 | ✅（安全网） | — |
+| 自由拖拽 / 折叠 | — | ✅ |
+| 数值点击切换短格式↔原始值 | — | ✅ |
+| 明暗主题跟随平台 | 自动 | ✅ |
+| 不受 React 重绘影响 | 自动重注入 | 独立 DOM |
 
----
+两个版本功能互补，**选一个安装即可**，也可以同时安装。
+
+### 页面注入版（DeepSeek-Usage-Enhancer.js）
+
+数据直接注入页面原生布局，与官方 UI 完全一致：
+
+- **今日消费 / 今日用量** 两张卡片，以官方卡片区末尾独立一行呈现
+- 每个模型的图表卡下方追加 **昨日 / 今日** 请求次数与 **缓存命中率** 行
+
+![hero](docs/hero.png)
+
+![models](docs/models.png)
+
+### 悬浮面板版（deepseek-usage-monitor.js)
+
+右下角悬浮面板，DeepSeek 设计语言（品牌蓝、圆角、跟随明暗主题）：
+
+![panel](docs/panel.png)
+
+- 今日消费 / 今日用量 / 充值余额 / 赠送余额 / 本月消费
+- 各模型：请求数、Token、缓存命中/未命中/输出、缓存命中率
+- 底部汇总：总请求、总 Token、总命中率
+- 标题栏拖拽移动（位置自动保存）、折叠、点击数值切换短格式（1.5K ↔ 1,500）
 
 ## 安装
 
-1. 安装浏览器用户脚本管理器：
-   - [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox）
+1. 安装浏览器扩展：**Tampermonkey（篡改猴）** 或 **Violentmonkey（暴力猴）**
+   - Chrome / Edge：应用商店搜索 "Tampermonkey"
+   - Firefox：附加组件商店
+2. 打开扩展管理页 → **添加新脚本** → 粘贴对应 `.js` 文件的全部内容 → 保存
+   - 或通过 [Greasy Fork](https://greasyfork.org/zh-CN/)（上架后）一键安装
+3. 打开 [DeepSeek 开放平台用量页](https://platform.deepseek.com/usage)（或从官网"API 开放平台"进入），脚本自动生效
 
-2. 点击管理器「添加新脚本」，将对应 `.js` 文件的全部内容粘贴进去，保存。
+> ⚠️ **Chrome 127+ 注意**：首次安装后若脚本不生效，需在 `chrome://extensions` → Tampermonkey → 详情 → 打开「**允许运行用户脚本**」（Allow user scripts）开关，然后重启浏览器。
 
-3. 打开 [DeepSeek 用量页面](https://platform.deepseek.com/usage)，脚本自动生效。
+## 兼容性
 
----
+| 项目 | 支持 |
+|---|---|
+| 浏览器 | Chrome / Edge / Firefox |
+| 脚本管理器 | Tampermonkey / Violentmonkey |
+| 页面 | `platform.deepseek.com` 下所有页面（从官网进入 / SPA 路由 / 直接访问均生效） |
+| 界面语言 | 中文 / English 自动适配 |
 
-## 功能详情
+## 数据与隐私
 
-
-### 页面注入版（`DeepSeek-Usage-Enhancer.js`）
-
-安装后打开用量页面，你会看到：
-
-- **「今日消费」卡片** — 紧挨着官方「本月消费」卡片，显示今天的消费金额（CNY）。
-- **今日/昨日请求次数** — 在每个模型的「API 请求次数」下方，追加昨天和今天的请求量。
-- **今日总 Tokens + 缓存命中率** — 在「Tokens」区域下方展示今日 Token 总量和缓存命中率。
-- **图表悬停数字千分位** — 鼠标悬停图表时，4 位以上数字自动加逗号分隔（如 `1234567` → `1,234,567`）。
-
-> 页面是 React 渲染的，脚本持续监听 DOM 变化，重绘后自动重新注入。
->
-> 
-
-### 悬浮面板版（`deepseek-usage-monitor.js`）
-
-安装后页面右下角会出现一个深色浮窗面板：
-
-- **账户余额** — 充值余额、本月消费、今日消费。
-- **各模型详情块** — `deepseek-v4-pro` 和 `deepseek-v4-Flash` 的请求数、总 Token、缓存命中/未命中/输出 Token、缓存命中率。
-- **底部状态栏** — 汇总总 Token 和总请求数。
-- **拖拽移动** — 拖动标题栏即可移动面板，位置自动保存到 localStorage。
-- **折叠/展开** — 点击标题栏按钮收起面板。
-- **数值切换** — 点击任意数字在短格式（`1.5K`）和原始值（`1,500`）之间切换。
-
-<img width="2033" height="1754" alt="image" src="https://github.com/user-attachments/assets/105d5f99-ff93-47b4-b490-780269ed8a11" />
-
----
+- **纯本地运行**：`@grant none`，不向任何第三方发送数据
+- 数据来自官方接口（`/api/v0/users/get_user_summary`、`/api/v0/usage/by_api_key/amount|cost`），脚本只读取拦截，不修改任何请求
+- 代码未压缩混淆，可逐行审查
 
 ## 原理简介
 
-两个脚本通过拦截页面发起的三个 API 请求获取原始数据：
+- **拦截层**：`fetch` + `XMLHttpRequest` 双重 monkey-patch，捕获官方用量接口的响应
+- **数据层**：从 `series[]`（API Key → 模型 → 时间桶）结构聚合今日数据；金额使用 **BigInt 定点精确累加**，与官方 Decimal 语义一致（显示截断到 2 位小数，不差一分钱）
+- **注入层**：**克隆原生卡片 / 指标行节点**再改写文案——样式 100% 继承官方，对 CSS hash 类漂移免疫，官方前端每次发版都不会影响脚本
+- **自适应**：模型名动态适配（官方新增模型自动识别）；页面语言中英自动探测；从官网首页 SPA 路由进入也能自动生效
 
-| API | 用途 |
-|-----|------|
-| `GET /api/v0/users/get_user_summary` | 账户余额与本月消费 |
-| `GET /api/v0/usage/amount` | 各模型的 Token/请求用量 |
-| `GET /api/v0/usage/cost` | 每日费用明细 |
+## 致敬原作者
 
-拦截方式：`window.fetch` 和 `XMLHttpRequest` 的双重 monkey-patch，确保覆盖所有请求方式。
+本项目由 [Jmkwang](https://github.com/Jmkwang)（Kiming）的 [DeepSeek-Usage-Enhancer](https://github.com/Jmkwang/DeepSeek-Usage-Enhancer) 重构而来。
 
-数据完全在浏览器本地处理，不向任何第三方发送。
+原作者设计了「双版本架构 + 拦截官方接口」的精妙思路，v1.x 的每个功能点——今日消费卡片、图表千分位、悬浮面板——在 v2.0 中都得到完整继承。**致敬原作者的原创设计与贡献** 🙏
 
----
+### 为什么脱离 fork 独立
 
-## 安全说明
+原项目于 2026-05 停止维护。2026-08，DeepSeek 开放平台经历大规模改版：
 
-- 纯本地运行，无远程通信，`@grant none`。
-- 源代码未压缩混淆，可逐行审查。
-- 「页面注入版」约 650 行，「悬浮面板版」约 680 行。
+- **API 路径变更**：`/usage/amount`、`/usage/cost` 废弃 → 新的 `by_api_key` 系列接口
+- **数据结构重构**：`days[].data[]` → `series[]`（按 API Key → 模型 → 时间桶）
+- **页面 DOM 重写**：脚本依赖的全部 CSS 类消失
 
----
+修复量达到「重写」级别（数据层、注入策略全部重做），因此本项目**解除 fork 独立维护**，以便长期演进。原作者的署名与设计理念完整保留于本项目的每一行代码中。
 
 ## 更新日志
 
-### v1.2.0
-- 页面注入版：长轮询间隔从 10s 缩短至 3s，页面重绘后响应更快。
+### v2.0.x（重构后）
+- **v2.0.7**：**回退卡片布局**——注入卡片恢复为紧邻官方锚点卡插入（今日消费→消费金额后、今日用量→Tokens 后），即用户验收通过的原始设计
+- **v2.0.6（已回退）**：曾改为独立容器布局，未获批准擅自实施，于 v2.0.7 回退
+- **v2.0.3**：修复从官网进入平台（SPA 路由）时插件不生效的问题
+- **v2.0.2**：修复金额显示 0.01 差异（BigInt 精确聚合 + 官方一致的截断显示）；修复语言检测时序 bug
+- **v2.0.1**：修复面板版「本月消费」误用终身累计的问题，改为真实本月聚合
+- **v2.0.0**：全面适配平台改版（新 API / 数据结构 / DOM），注入策略改为克隆原生节点
 
-### v1.1.0
-- 新增悬浮面板版 `deepseek-usage-monitor.js`，支持拖拽、折叠、数值格式切换。
-
-### v1.0.0
-- 首次发布页面注入版：今日消费卡片、模型请求/Token/缓存命中率、图表千分位。
-
----
+### v1.x（原版，出自 Jmkwang/Kiming）
+- v1.2.0 轮询优化 / v1.1.0 新增悬浮面板版 / v1.0.0 首次发布
 
 ## 许可
 
-MIT
+[MIT](LICENSE)。版权归 moqiecuican，源自 Jmkwang 以 MIT 许可发布的原始项目。

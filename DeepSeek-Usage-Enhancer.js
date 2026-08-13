@@ -1,657 +1,588 @@
 // ==UserScript==
-// @name         DeepSeek Usage Enhancer 
-// @namespace    https://github.com/local/deepseek-usage-enhancer
-// @version      1.2.0
-// @description  在 DeepSeek 用量页面直接注入今日数据：今日消费、今日请求数、今日Token、缓存命中率；图表悬停数字加千分位
-// @author       Jmkwang
-// @match        https://platform.deepseek.com/usage*
+// @name         DeepSeek Usage Enhancer
+// @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
+// @version      2.0.7
+// @description  在 DeepSeek 开放平台用量页注入今日数据：今日消费、今日用量、各模型今日/昨日请求数与缓存命中率（原生克隆，以假乱真）
+// @author       Jmkwang, Kiming, moqiecuican
+// @match        https://platform.deepseek.com/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+/**
+ * DeepSeek Usage Enhancer v2.0.0（页面注入版）
+ *
+ * 适配 DeepSeek 开放平台 2026-08 全新用量页：
+ *   - API: /api/v0/usage/by_api_key/amount|cost + /api/v0/users/get_user_summary
+ *   - 数据: series[] = api_key × model × buckets[{time, usage}]
+ *   - 页面: ds-* 设计系统 + data-usage-layout-* 语义锚点
+ *
+ * 注入策略（以假乱真）：克隆原生卡片/指标行节点，只改文案与数值，
+ * 全部样式继承原生 —— CSS Modules hash class 再变也不影响。
+ * 数据完全在浏览器本地处理，不向任何第三方发送。
+ */
 
 (function () {
   'use strict';
 
   // ============================================================
+  // 配置（集中管理 —— 与站点契约，站点改版先查这里）
+  // ============================================================
+  const TRACKED_ENDPOINTS = [
+    '/api/v0/usage/by_api_key/amount',   // 各 API Key × 模型 的 Token/请求用量
+    '/api/v0/usage/by_api_key/cost',     // 各 API Key × 模型 的费用
+    '/api/v0/users/get_user_summary',    // 账户余额/累计消费
+  ];
+
+  // 注入节点标记（防止重复注入 + 定位已注入节点更新数值）
+  const CARD_TODAY_COST = 'data-dsue-card-today-cost';
+  const CARD_TODAY_USAGE = 'data-dsue-card-today-usage';
+  const ROW_MARKER = 'data-dsue-row';
+
+  // 文案（中文优先，英文兜底）
+  const L = {
+    zh: {
+      todayCost: '今日消费', todayUsage: '今日用量',
+      today: '今日', yesterday: '昨日', cacheHitRate: '缓存命中率',
+      cardCost: '消费金额', cardTokens: 'Tokens',
+      metricRequests: ['API 请求次数', '请求次数'], metricTokens: ['Tokens'],
+    },
+    en: {
+      todayCost: "Today's cost", todayUsage: 'Today usage',
+      today: 'Today', yesterday: 'Yesterday', cacheHitRate: 'Cache hit rate',
+      cardCost: ['Cost'], cardTokens: ['Tokens'],
+      metricRequests: ['Requests', 'API Requests'], metricTokens: ['Tokens'],
+    },
+  };
+
+  // ============================================================
   // 状态
   // ============================================================
-  let bearerToken = null;
-
-  let rawUserSummary = null;
-  let rawUsageAmount = null;
-  let rawUsageCost = null;
+  let auth = null;                                  // Authorization 头（自请求兜底用）
+  const store = { amount: null, cost: null, summary: null };
+  let lang = null;                                  // 页面语言（zh/en），首次注入时探测
 
   // ============================================================
   // 工具函数
   // ============================================================
-  function utcToday() {
-    const d = new Date();
-    return d.getUTCFullYear() + '-' +
-      String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
-      String(d.getUTCDate()).padStart(2, '0');
-  }
-
-  function utcYesterday() {
-    const d = new Date(Date.now() - 86400000);
-    return d.getUTCFullYear() + '-' +
-      String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
-      String(d.getUTCDate()).padStart(2, '0');
-  }
-
-  function utcMonthYear() {
-    const d = new Date();
-    return { month: d.getUTCMonth() + 1, year: d.getUTCFullYear() };
+  function log(msg) {
+    console.log('[DSUE] ' + msg);
   }
 
   function safeJSON(text) {
-    try { return JSON.parse(text); } catch { return null; }
+    try { return JSON.parse(text); } catch (e) { return null; }
   }
 
-  function log(msg) {
-    console.log('[DS Inject] ' + msg);
-  }
-
-  // ============================================================
-  // biz_data 提取
-  // ============================================================
   function extractBizData(json) {
-    if (!json) return null;
-    let result = null;
-    if (json.biz_data) result = json.biz_data;
-    else if (json.data && json.data.biz_data) result = json.data.biz_data;
-    else if (json.data && Array.isArray(json.data) && json.data.length > 0) result = json.data[0];
-    else result = json;
-    if (Array.isArray(result) && result.length > 0) return result[0];
-    return result;
-  }
-
-  function findAuthHeader(req) {
-    if (req.headers && typeof req.headers.get === 'function') {
-      return req.headers.get('Authorization') || req.headers.get('authorization');
-    }
-    if (req.headers && typeof req.headers === 'object') {
-      return req.headers['Authorization'] || req.headers['authorization'];
-    }
+    if (!json || typeof json !== 'object') return null;
+    if (json.biz_data) return json.biz_data;
+    if (json.data && json.data.biz_data) return json.data.biz_data;
     return null;
   }
 
-  // ============================================================
-  // 数据变换
-  // ============================================================
-  function usageArrayToMap(usageArr) {
-    if (!Array.isArray(usageArr)) return {};
-    const map = {};
-    for (const u of usageArr) {
-      map[u.type] = Number(u.amount) || 0;
-    }
-    return map;
+  function fmtInt(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return Math.round(Number(n)).toLocaleString('en-US');
   }
 
-  function extractMetricsFromUsage(usageMap) {
-    const types = Object.keys(usageMap);
-    const lowerMap = {};
-    for (const t of types) {
-      lowerMap[t.toLowerCase()] = usageMap[t];
-    }
+  function fmtMoney(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    // 与官方一致：金额显示截断到 2 位小数（官方 Decimal.floor(2)），非四舍五入
+    return Math.floor(Number(n) * 100) / 100 + '';
+  }
 
-    const find = (keywords) => {
-      for (const kw of keywords) {
-        if (usageMap[kw] !== undefined) return usageMap[kw];
-        if (lowerMap[kw.toLowerCase()] !== undefined) return lowerMap[kw.toLowerCase()];
-        for (const t of types) {
-          if (t.toLowerCase().includes(kw.toLowerCase())) return usageMap[t];
+  /**
+   * 金额精确累加（对齐官方 Decimal 语义）。
+   * cost 字符串 -> BigInt 定点（×1e8，覆盖官方 8 位小数字段）
+   */
+  function costToFixed(str) {
+    const s = String(str ?? '0').trim();
+    const neg = s.startsWith('-');
+    const a = neg ? s.slice(1) : s;
+    const dot = a.indexOf('.');
+    const intPart = dot === -1 ? a : a.slice(0, dot);
+    const fracPart = dot === -1 ? '' : a.slice(dot + 1);
+    let v = BigInt(intPart || '0') * 100000000n;
+    if (fracPart) v += BigInt((fracPart + '00000000').slice(0, 8));
+    return neg ? -v : v;
+  }
+
+  /** 定点值 -> 显示字符串：截断到 2 位小数（对齐官方） */
+  function fmtFixedCents(v) {
+    const neg = v < 0n;
+    const a = neg ? -v : v;
+    const yuan = a / 100000000n;
+    const cents = (a % 100000000n) / 1000000n;   // 截断第 3 位以后
+    return (neg ? '-' : '') + yuan.toString() + '.' + cents.toString().padStart(2, '0');
+  }
+
+  function fmtRate(r) {
+    if (r === null || r === undefined || isNaN(r)) return '—';
+    return (r * 100).toFixed(1) + '%';
+  }
+
+  /**
+   * 今日/昨日区间（与页面 h2() 同语义：本地时区，tz=整小时偏移秒数）
+   * 返回 { start, end, tz } —— start=今天本地 00:00 对齐秒，end=明天 00:00
+   */
+  function todayRange() {
+    const now = new Date();
+    const tzMin = -now.getTimezoneOffset();              // 本地时区偏移分钟
+    const tzSec = 3600 * Math.floor(tzMin * 60 / 3600);  // 整小时偏移（秒）
+    const rem = tzMin * 60 - tzSec;                      // 分钟余数（秒）
+    const ms = d => Math.floor(d.getTime() / 1000);
+    const dayStart = ms(new Date(now.getFullYear(), now.getMonth(), now.getDate())) + rem;
+    return { start: dayStart, end: dayStart + 86400, tz: tzSec };
+  }
+
+  function yesterdayStart() {
+    return todayRange().start - 86400;
+  }
+
+  /** 响应区间是否覆盖指定秒 */
+  function rangeCovers(biz, t) {
+    return biz && Number.isFinite(biz.start) && Number.isFinite(biz.end)
+      && biz.start <= t && t < biz.end;
+  }
+
+  // ============================================================
+  // 数据变换（与 bundle 中 h0/h2/hG/mu/mf 逻辑对齐）
+  // ============================================================
+
+  /**
+   * 从 amount 响应聚合「某一天」各模型指标。
+   * @param {object} biz  amount 的 biz_data {start,end,bucket,models,series[]}
+   * @param {number} dayStartSec  目标日 00:00（秒）
+   * @returns {object} { perModel: {model: {requests, hit, miss, output, tokens, cacheHitRate}}, total: {...} }
+   */
+  function aggregateDay(biz, dayStartSec) {
+    const dayEnd = dayStartSec + 86400;
+    const perModel = {};
+    const total = { requests: 0, hit: 0, miss: 0, output: 0 };
+    for (const s of (biz && biz.series) || []) {
+      const m = perModel[s.model] || (perModel[s.model] = { requests: 0, hit: 0, miss: 0, output: 0, tokens: 0, cacheHitRate: null });
+      for (const b of s.buckets || []) {
+        if (b.time < dayStartSec || b.time >= dayEnd) continue;
+        const u = b.usage || {};
+        const req = Number(u.REQUEST) || 0;
+        const hit = Number(u.PROMPT_CACHE_HIT_TOKEN) || 0;
+        const miss = Number(u.PROMPT_CACHE_MISS_TOKEN) || 0;
+        const out = Number(u.RESPONSE_TOKEN) || 0;
+        m.requests += req; m.hit += hit; m.miss += miss; m.output += out;
+        total.requests += req; total.hit += hit; total.miss += miss; total.output += out;
+      }
+    }
+    for (const m of Object.values(perModel)) {
+      m.tokens = m.hit + m.miss + m.output;
+      m.cacheHitRate = (m.hit + m.miss) > 0 ? m.hit / (m.hit + m.miss) : null;
+    }
+    total.tokens = total.hit + total.miss + total.output;
+    total.cacheHitRate = (total.hit + total.miss) > 0 ? total.hit / (total.hit + total.miss) : null;
+    return { perModel, total };
+  }
+
+  /**
+   * 从 cost 响应聚合「某时间范围」各币种费用（BigInt 定点精确累加，对齐官方 Decimal）。
+   * @returns {object} { perCurrency: {CNY: 103n(定点)}, total: 103n }
+   */
+  function aggregateCostDay(biz, startSec, endSec) {
+    const perCurrency = {};
+    let total = 0n;
+    for (const d of (biz && biz.data) || []) {
+      const cur = d.currency || 'CNY';
+      let sum = 0n;
+      for (const s of d.series || []) {
+        for (const b of s.buckets || []) {
+          if (b.time < startSec || b.time >= endSec) continue;
+          sum += costToFixed(b.cost);
         }
       }
-      return 0;
-    };
-
-    const cachedInput = find(['PROMPT_CACHE_HIT_TOKEN', 'PROMPT_CACHE_HIT_TOKENS',
-      'CACHE_HIT_TOKENS', 'cache_hit_tokens', 'prompt_cache_hit_tokens']);
-    const uncachedInput = find(['PROMPT_CACHE_MISS_TOKEN', 'PROMPT_CACHE_MISS_TOKENS',
-      'CACHE_MISS_TOKENS', 'cache_miss_tokens', 'prompt_cache_miss_tokens']);
-    const output = find(['RESPONSE_TOKEN', 'RESPONSE_TOKENS',
-      'COMPLETION_TOKEN', 'COMPLETION_TOKENS',
-      'output_tokens', 'completion_tokens']);
-    const requests = find(['REQUEST', 'REQUESTS',
-      'API_REQUESTS', 'request_count', 'api_requests']);
-
-    const total = cachedInput + uncachedInput + output;
-    const divisor = cachedInput + uncachedInput;
-    const cacheHitRate = divisor > 0
-      ? Math.round((cachedInput / divisor) * 10000) / 100
-      : null;
-
-    return { requests, tokens: { total, cached_input: cachedInput, uncached_input: uncachedInput, output }, cache_hit_rate: cacheHitRate };
-  }
-
-  function transformUserSummary(bizData) {
-    const normalBal = (bizData.normal_wallets && bizData.normal_wallets[0])
-      ? Number(bizData.normal_wallets[0].balance) || 0 : 0;
-    const bonusBal = (bizData.bonus_wallets && bizData.bonus_wallets[0])
-      ? Number(bizData.bonus_wallets[0].balance) || 0 : 0;
-    const monthlyCost = (bizData.monthly_costs && bizData.monthly_costs[0])
-      ? Number(bizData.monthly_costs[0].amount) || 0 : 0;
-    const currency = (bizData.monthly_costs && bizData.monthly_costs[0])
-      ? bizData.monthly_costs[0].currency : 'CNY';
-    return {
-      balance: { total: normalBal, normal_wallet_balance: normalBal, bonus_wallet_balance: bonusBal, currency },
-      monthly_consumption: { amount: monthlyCost, currency },
-    };
-  }
-
-  function extractModelsForDate(bizData, dateStr) {
-    const models = {};
-    let dayEntries = [];
-    if (bizData.days) {
-      const day = bizData.days.find(d => d.date === dateStr);
-      if (day && day.data) dayEntries = day.data;
+      perCurrency[cur] = sum;
+      total += sum;
     }
-    const allEntries = [...dayEntries, ...(bizData.total || [])];
-
-    for (const entry of allEntries) {
-      if (!entry.model) continue;
-      const lower = entry.model.toLowerCase();
-      const isPro = lower.includes('pro') && (lower.includes('v4') || lower.includes('v-4'));
-      const isFlash = lower.includes('flash') && (lower.includes('v4') || lower.includes('v-4'));
-      if (!isPro && !isFlash) continue;
-
-      const metrics = extractMetricsFromUsage(usageArrayToMap(entry.usage));
-      if (dayEntries.includes(entry) || !models[entry.model]) {
-        models[entry.model] = metrics;
-      }
-    }
-    return models;
+    return { perCurrency, total };
   }
 
-  function transformUsageAmount(bizData) {
-    const today = utcToday();
-    const yesterday = utcYesterday();
-    return {
-      today_date: today,
-      models: extractModelsForDate(bizData, today),
-      yesterday_models: extractModelsForDate(bizData, yesterday),
-    };
+  /** 汇总今日视图：cost + amount 各模型 + 总量 */
+  function computeToday() {
+    const r = todayRange();
+    const cost = store.cost && rangeCovers(extractBizData(store.cost), r.start)
+      ? aggregateCostDay(extractBizData(store.cost), r.start) : null;
+    const amount = store.amount && rangeCovers(extractBizData(store.amount), r.start)
+      ? aggregateDay(extractBizData(store.amount), r.start) : null;
+    const yest = store.amount && rangeCovers(extractBizData(store.amount), yesterdayStart())
+      ? aggregateDay(extractBizData(store.amount), yesterdayStart()) : null;
+    return { cost, amount, yest, models: (extractBizData(store.amount) || {}).models || [] };
   }
 
-  function transformUsageCost(bizData) {
-    const today = utcToday();
-    let todayCost = 0;
-    const currency = bizData.currency || 'CNY';
+  // ============================================================
+  // 拦截层（fetch + XHR 双重 monkey-patch）
+  // ============================================================
+  function installInterceptors() {
+    const interested = url => TRACKED_ENDPOINTS.some(ep => url.includes(ep));
 
-    if (bizData.days) {
-      const todayDay = bizData.days.find(d => d.date === today);
-      if (todayDay && todayDay.data) {
-        for (const entry of todayDay.data) {
-          if (entry.usage) {
-            for (const u of entry.usage) {
-              todayCost += Number(u.amount) || 0;
-            }
-          }
+    // ---- XHR（页面主用）----
+    const XHR = window.XMLHttpRequest;
+    if (XHR) {
+      const origOpen = XHR.prototype.open;
+      const origSend = XHR.prototype.send;
+      const origSetHeader = XHR.prototype.setRequestHeader;
+
+      XHR.prototype.open = function (method, url) {
+        this.__dsUrl = String(url);
+        this.__dsMethod = method;
+        return origOpen.apply(this, arguments);
+      };
+      XHR.prototype.setRequestHeader = function (name, value) {
+        // 捕获鉴权头，供自请求兜底
+        if (/authorization/i.test(name)) auth = value;
+        return origSetHeader.apply(this, arguments);
+      };
+      XHR.prototype.send = function () {
+        if (interested(this.__dsUrl || '')) {
+          const xhr = this;
+          xhr.addEventListener('load', function () {
+            const body = safeJSON(xhr.responseText);
+            if (!body) return;
+            const biz = extractBizData(body);
+            if (this.__dsUrl.includes('/by_api_key/amount')) store.amount = body;
+            else if (this.__dsUrl.includes('/by_api_key/cost')) store.cost = body;
+            else if (this.__dsUrl.includes('/get_user_summary')) store.summary = body;
+            else return;
+            log('拦截 ' + this.__dsUrl.split('?')[0] + ' -> ' + (biz ? 'biz_data' : '无数据'));
+            scheduleInject();
+          });
         }
-      }
+        return origSend.apply(this, arguments);
+      };
     }
 
-    return { today_cost: { amount: Math.floor(todayCost * 100) / 100, currency } };
-  }
-
-  function buildOutputPayload() {
-    const summary = rawUserSummary
-      ? transformUserSummary(rawUserSummary)
-      : { balance: { total: 0, currency: 'CNY' }, monthly_consumption: { amount: 0, currency: 'CNY' } };
-
-    let usageData = { today_date: utcToday(), models: {}, yesterday_models: {} };
-    if (rawUsageAmount) usageData = transformUsageAmount(rawUsageAmount);
-
-    let costData = { today_cost: { amount: 0, currency: 'CNY' } };
-    if (rawUsageCost) costData = transformUsageCost(rawUsageCost);
-
-    return {
-      timestamp: new Date().toISOString(),
-      ...summary,
-      ...usageData,
-      ...costData,
-    };
-  }
-
-  // ============================================================
-  // 数据接收
-  // ============================================================
-  function processApiResponse(endpoint, bizData) {
-    switch (endpoint) {
-    case 'get_user_summary': rawUserSummary = bizData; break;
-    case 'usage_amount': rawUsageAmount = bizData; break;
-    case 'usage_cost': rawUsageCost = bizData; break;
-    }
-    const payload = buildOutputPayload();
-    if (payload) {
-      onDataUpdate(payload);
-    }
-  }
-
-  // ============================================================
-  // 拦截层
-  // ============================================================
-  const TRACKED_ENDPOINTS = [
-    { method: 'GET', path: '/api/v0/users/get_user_summary', id: 'get_user_summary' },
-    { method: 'GET', path: '/api/v0/usage/amount', id: 'usage_amount' },
-    { method: 'GET', path: '/api/v0/usage/cost', id: 'usage_cost' },
-  ];
-
-  function matchEndpoint(method, url) {
-    for (const ep of TRACKED_ENDPOINTS) {
-      if (method.toUpperCase() === ep.method && url.includes(ep.path)) {
-        return ep;
-      }
-    }
-    return null;
-  }
-
-  // --- fetch 拦截 ---
-  const origFetch = window.fetch;
-  window.fetch = function (input, init) {
-    const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : '');
-    const method = (init && init.method) || (input instanceof Request ? input.method : 'GET');
-    const ep = matchEndpoint(method, url);
-
-    if (ep) {
-      const req = input instanceof Request ? input : { headers: init && init.headers };
-      if (!bearerToken) {
-        const auth = findAuthHeader(req);
-        if (auth && auth.startsWith('Bearer ')) bearerToken = auth.slice(7);
-      }
-    }
-
-    return origFetch.call(window, input, init).then(async (response) => {
-      if (ep && response.ok) {
+    // ---- fetch（防御性兜底）----
+    const origFetch = window.fetch;
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      // 捕获请求鉴权头（init.headers 或 Request 对象）
+      if (interested(url)) {
         try {
-          const cloned = response.clone();
-          const json = await cloned.json();
-          const bizData = extractBizData(json);
-          if (bizData) processApiResponse(ep.id, bizData);
+          const hd = (init && init.headers) || (input instanceof Request ? input.headers : null);
+          if (hd) new Headers(hd).forEach((v, k) => {
+            if (/authorization/i.test(k)) auth = v;
+          });
         } catch (e) { /* ignore */ }
       }
-      return response;
+      const p = origFetch.apply(this, arguments);
+      if (!interested(url)) return p;
+      p.then(resp => {
+        if (!resp) return;
+        resp.clone().text().then(t => {
+          const body = safeJSON(t);
+          if (!body) return;
+          if (url.includes('/by_api_key/amount')) store.amount = body;
+          else if (url.includes('/by_api_key/cost')) store.cost = body;
+          else if (url.includes('/get_user_summary')) store.summary = body;
+          else return;
+          log('拦截(fetch) ' + url.split('?')[0]);
+          scheduleInject();
+        }).catch(() => {});
+      }).catch(() => {});
+      return p;
+    };
+    log('拦截层已就绪');
+  }
+
+  /** 自请求兜底：当页面当前选的时间范围不含今天时，自己拉一次今日数据（带频率限制） */
+  let lastSelfRequest = 0;
+  function ensureTodayData() {
+    const r = todayRange();
+    const needAmount = !(store.amount && rangeCovers(extractBizData(store.amount), r.start));
+    const needCost = !(store.cost && rangeCovers(extractBizData(store.cost), r.start));
+    if (!needAmount && !needCost) return;
+    if (!auth) return;                                  // 页面还没发过请求，稍后再试
+    if (Date.now() - lastSelfRequest < 10000) return;   // 限流：10s 内最多一次
+    lastSelfRequest = Date.now();
+    const q = `?start=${r.start}&end=${r.end}&tz=${r.tz}`;
+    const hdrs = { Authorization: auth };
+    if (needAmount) {
+      fetch('/api/v0/usage/by_api_key/amount' + q, { headers: hdrs })
+        .then(resp => resp.json()).then(j => {
+          const biz = extractBizData(j);
+          if (biz) { store.amount = j; log('自请求 amount 成功'); scheduleInject(); }
+        }).catch(e => log('自请求 amount 失败: ' + e));
+    }
+    if (needCost) {
+      fetch('/api/v0/usage/by_api_key/cost' + q, { headers: hdrs })
+        .then(resp => resp.json()).then(j => {
+          const biz = extractBizData(j);
+          if (biz) { store.cost = j; log('自请求 cost 成功'); scheduleInject(); }
+        }).catch(e => log('自请求 cost 失败: ' + e));
+    }
+  }
+
+  // ============================================================
+  // 语言探测
+  // ============================================================
+  function detectLang() {
+    const cls = document.body && document.body.className || '';
+    if (/zh/i.test(cls)) return 'zh';
+    if (/en/i.test(cls)) return 'en';
+    // 兜底：看原生卡片文案（此时 body class 可能尚未被 React 设置）
+    const cards = document.querySelectorAll('[data-usage-layout-card]');
+    const text = Array.from(cards).map(c => c.innerText || '').join(' ');
+    if (/消费金额|充值余额/.test(text)) return 'zh';
+    if (/balance|cost|token/i.test(text)) return 'en';
+    return null;   // 完全不确定：等下一轮再测，避免过早锁死错误语言
+  }
+
+  const LANG = () => L[lang] || L.zh;
+
+  // ============================================================
+  // 注入层 —— 全部「克隆原生节点」实现以假乱真
+  // ============================================================
+
+  /** 按标题文案找原生卡片（返回卡片元素） */
+  function findCardByTitle(candidates) {
+    const cards = document.querySelectorAll('[data-usage-layout-card]');
+    for (const card of cards) {
+      const titleEl = card.querySelector('[data-usage-layout-row] > span, [data-usage-layout-row] span');
+      if (!titleEl) continue;
+      const t = (titleEl.textContent || '').trim();
+      if (candidates.includes(t)) return card;
+    }
+    return null;
+  }
+
+  /** 注入/刷新 今日消费 / 今日用量 卡片（克隆原生，紧邻锚点卡片插入——恢复原始设计） */
+  function injectTodayCards(data) {
+    const l = LANG();
+    const updateOrCreate = (anchorCard, marker, newTitle, valueText, unitText) => {
+      if (!anchorCard) return;
+      let card = document.querySelector('[' + marker + ']');
+      if (card) {
+        const v = card.querySelector('[data-usage-layout-font="value"]');
+        if (v && valueText) v.textContent = valueText;
+        const u = card.querySelector('[data-usage-layout-font="unit"]');
+        if (u && unitText) u.textContent = unitText;
+        return;
+      }
+      // 原生卡片还在骨架屏（加载中）-> 等下一轮再克隆，避免复制骨架
+      if (anchorCard.querySelector('.ds-skeleton')) return;
+      const clone = anchorCard.cloneNode(true);
+      const titleEl = clone.querySelector('[data-usage-layout-row] > span, [data-usage-layout-row] span');
+      if (titleEl) titleEl.textContent = newTitle;
+      const valueEl = clone.querySelector('[data-usage-layout-font="value"]');
+      if (valueEl && valueText) valueEl.textContent = valueText;
+      const unitEl = clone.querySelector('[data-usage-layout-font="unit"]');
+      if (unitEl && unitText) unitEl.textContent = unitText;
+      clone.setAttribute(marker, 'true');
+      anchorCard.insertAdjacentElement('afterend', clone);
+      log('注入卡片：' + newTitle + ' ' + valueText);
+    };
+
+    // 今日消费：克隆「消费金额」卡片，紧邻其后插入
+    const todayCost = data.cost ? (data.cost.perCurrency['CNY'] ?? data.cost.total) : null;
+    updateOrCreate(findCardByTitle(l.cardCost), CARD_TODAY_COST, l.todayCost,
+      todayCost !== null ? '¥' + fmtFixedCents(todayCost) : null, 'CNY');
+    // 今日用量：克隆「Tokens」卡片，紧邻其后插入
+    const todayTokens = data.amount ? data.amount.total.tokens : null;
+    updateOrCreate(findCardByTitle(l.cardTokens), CARD_TODAY_USAGE, l.todayUsage,
+      todayTokens !== null ? fmtInt(todayTokens) : null, null);
+  }
+
+  /**
+   * 找「指标头」元素：结构 = 恰好 2 个 span 子元素，首个 span 文案命中指标名。
+   * 返回 [{ el, kind: 'requests'|'tokens' }]
+   */
+  function findMetricHeaders() {
+    const l = LANG();
+    const out = [];
+    document.querySelectorAll('div').forEach(el => {
+      const spans = Array.from(el.children).filter(c => c.tagName === 'SPAN');
+      if (spans.length !== 2) return;
+      const t = (spans[0].textContent || '').trim();
+      if (l.metricRequests.includes(t)) out.push({ el, kind: 'requests' });
+      else if (l.metricTokens.includes(t)) out.push({ el, kind: 'tokens' });
     });
-  };
+    return out;
+  }
 
-  // --- XHR 拦截 ---
-  const OrigXHR = window.XMLHttpRequest;
-  window.XMLHttpRequest = function () {
-    const xhr = new OrigXHR();
-    let _method = 'GET';
-    let _url = '';
+  /** 从指标头向上找所属模型（数据动态下发，不能硬编码模型名） */
+  function findModelFor(headerEl, models) {
+    let el = headerEl.parentElement;
+    while (el && el !== document.body) {
+      const txt = el.textContent || '';
+      const hits = models.filter(m => m && txt.includes(m));
+      if (hits.length === 1 && el.children.length <= 20) return hits[0];
+      if (hits.length > 1) return null;   // 歧义（容器含多模型名），放弃
+      el = el.parentElement;
+    }
+    return null;
+  }
 
-    const origOpen = xhr.open;
-    xhr.open = function (method, url, ...rest) {
-      _method = method;
-      _url = typeof url === 'string' ? url : url.toString();
-      return origOpen.call(xhr, method, url, ...rest);
-    };
+  /** 注入各模型「昨日/今日/缓存命中率」行 */
+  function injectPerModelRows(data) {
+    const l = LANG();
+    const headers = findMetricHeaders();
+    if (!headers.length || !data.amount) return;
+    const models = data.models;
+    if (!models.length) return;
 
-    const origSetRequestHeader = xhr.setRequestHeader;
-    xhr.setRequestHeader = function (header, value) {
-      if (header.toLowerCase() === 'authorization' && value.startsWith('Bearer ')) {
-        if (!bearerToken) bearerToken = value.slice(7);
+    for (const { el, kind } of headers) {
+      const model = findModelFor(el, models);
+      if (!model) continue;
+      const todayM = data.amount.perModel[model];
+      const yestM = data.yest && data.yest.perModel[model];
+      if (!todayM) continue;
+
+      const rows = [];
+      if (kind === 'requests') {
+        rows.push({ label: l.yesterday, value: fmtInt(yestM ? yestM.requests : null), cls: 'y' });
+        rows.push({ label: l.today, value: fmtInt(todayM.requests), cls: 't' });
+      } else { // tokens
+        rows.push({ label: l.today, value: fmtInt(todayM.tokens), cls: 't' });
+        rows.push({ label: l.cacheHitRate, value: fmtRate(todayM.cacheHitRate), cls: 'r' });
       }
-      return origSetRequestHeader.call(xhr, header, value);
-    };
-
-    const origSend = xhr.send;
-    xhr.send = function (body) {
-      const ep = matchEndpoint(_method, _url);
-      xhr.addEventListener('load', function () {
-        if (ep && xhr.status >= 200 && xhr.status < 300) {
-          const json = safeJSON(xhr.responseText);
-          if (json) {
-            const bizData = extractBizData(json);
-            if (bizData) processApiResponse(ep.id, bizData);
+      // 防重复：容器内已有注入行 -> 按 label 刷新值（数据晚到时也能更新）
+      const container = el.parentElement;
+      if (container) {
+        const existing = container.querySelectorAll('[' + ROW_MARKER + ']');
+        if (existing.length) {
+          for (const r of existing) {
+            const lab = r.querySelector('span');
+            if (!lab || !r.children[1]) continue;
+            const row = rows.find(x => x.label === lab.textContent.trim());
+            if (row) r.children[1].textContent = row.value;
           }
+          continue;
         }
-      });
-      return origSend.call(xhr, body);
+      }
+
+      for (const row of rows) {
+        const clone = el.cloneNode(true);
+        const spans = clone.children;
+        if (spans.length >= 2) {
+          spans[0].textContent = row.label;
+          spans[1].textContent = row.value;
+        }
+        clone.setAttribute(ROW_MARKER, row.cls);
+        el.insertAdjacentElement('afterend', clone);
+      }
+      log('注入模型行：' + model + ' ' + kind + ' (今日=' + fmtInt(kind === 'requests' ? todayM.requests : todayM.tokens) + ')');
+    }
+  }
+
+  /**
+   * 图表 tooltip 千分位（安全网版）：
+   * 新平台原生已对 tooltip 的金额/Token 做千分位，此观察器只兜底未格式化的场景。
+   * 只处理：(a) data-usage-layout-root 内新增节点；(b) 绝对定位的 tooltip 层。
+   * 正则排除日期（2026-08-13）与已格式化数字（1,234）。
+   */
+  function installTooltipFormatter() {
+    const re = /(?<![\d.\-])(\d{4,})(?![\d.\-])/g;
+    const formatNode = root => {
+      if (root._dsFormatted) return;
+      root._dsFormatted = true;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const orig = node.textContent;
+        if (!re.test(orig)) continue;
+        re.lastIndex = 0;
+        const formatted = orig.replace(re, (_, n) => Number(n).toLocaleString('en-US'));
+        if (formatted !== orig) node.textContent = formatted;
+      }
     };
-    return xhr;
-  };
-  window.XMLHttpRequest.prototype = OrigXHR.prototype;
-
-  // ============================================================
-  // DOM 注入
-  // ============================================================
-  let latestPayload = null;
-  let tooltipObserverSetup = false;
-  const INJECT_MARKER = 'data-ds-inject';
-
-  function onDataUpdate(payload) {
-    latestPayload = payload;
-    tryAllInjections();
-  }
-
-  // 检查页面上是否已有注入标记（被 React 重绘后标记消失）
-  function isInjectionPresent(marker) {
-    return !!document.querySelector('[' + INJECT_MARKER + '="' + marker + '"]');
-  }
-
-  function tryAllInjections() {
-    if (!latestPayload) return;
-
-    // 今日消费卡片：不存在则创建，已存在则更新金额
-    if (!isInjectionPresent('cost')) {
-      injectTodayCostCard();
-    } else {
-      updateTodayCostAmount();
-    }
-
-    const modelNames = Object.keys(latestPayload.models || {});
-    for (const name of modelNames) {
-      const marker = 'model-' + name.replace(/[^a-z0-9-]/gi, '_');
-      if (!isInjectionPresent(marker)) {
-        const yd = (latestPayload.yesterday_models || {})[name];
-        injectModelData(name, latestPayload.models[name], yd, marker);
-      }
-    }
-
-    if (!tooltipObserverSetup) {
-      setupTooltipFormatter();
-      tooltipObserverSetup = true;
-    }
-  }
-
-  // ---- 今日消费卡片 ----
-  function injectTodayCostCard() {
-    // 找到本月消费卡片（确认数据已加载：_7ed1d04 里必须有 ¥ + 数字两个 span）
-    const allCards = document.querySelectorAll('[class*="a0cde8c1"]');
-    let monthCard = null;
-    for (const card of allCards) {
-      const titleEl = card.querySelector('[class*="_477051d"]');
-      if (titleEl && titleEl.textContent.includes('本月消费')) {
-        const valueEl = card.querySelector('[class*="_7ed1d04"]');
-        if (valueEl && valueEl.querySelectorAll('span').length >= 2) {
-          monthCard = card;
-        }
-        break;
-      }
-    }
-    if (!monthCard) return;
-
-    // 从原始卡片读取精确的 class 名，从头构建（不用 cloneNode，避免 React 导致子元素丢失）
-    const cardClass = monthCard.className;
-    const titleClass = monthCard.querySelector('[class*="_477051d"]').className;
-
-    const todayCard = document.createElement('div');
-    todayCard.className = cardClass;
-    todayCard.setAttribute(INJECT_MARKER, 'cost');
-
-    const titleDiv = document.createElement('div');
-    titleDiv.className = titleClass;
-    titleDiv.textContent = '今日消费';
-
-    const outerDiv = document.createElement('div');
-    outerDiv.className = 'abf3dfef';
-    const midDiv = document.createElement('div');
-    const bbDiv = document.createElement('div');
-    bbDiv.className = '_4bb7bee';
-
-    const v7Div = document.createElement('div');
-    v7Div.className = '_7ed1d04';
-    const yen = document.createElement('span');
-    yen.textContent = '¥';
-    const amt = document.createElement('span');
-    amt.textContent = (latestPayload.today_cost || {}).amount.toFixed(2);
-    v7Div.appendChild(yen);
-    v7Div.appendChild(amt);
-    bbDiv.appendChild(v7Div);
-
-    const cnyDiv = document.createElement('div');
-    cnyDiv.className = '_1ef3557';
-    cnyDiv.style.cssText = 'color: rgb(var(--ds-rgb-label-2));';
-    cnyDiv.textContent = 'CNY';
-    bbDiv.appendChild(cnyDiv);
-
-    midDiv.appendChild(bbDiv);
-    outerDiv.appendChild(midDiv);
-
-    todayCard.appendChild(titleDiv);
-    todayCard.appendChild(outerDiv);
-
-    monthCard.parentElement.insertBefore(todayCard, monthCard.nextSibling);
-  }
-
-  function updateTodayCostAmount() {
-    const costCard = document.querySelector('[' + INJECT_MARKER + '="cost"]');
-    if (!costCard) return;
-    const v7Div = costCard.querySelector('[class*="_7ed1d04"]');
-    if (!v7Div) return;
-    const spans = v7Div.querySelectorAll('span');
-    if (spans.length >= 2) {
-      spans[1].textContent = (latestPayload.today_cost || {}).amount.toFixed(2);
-    }
-  }
-
-  // ---- 模型数据注入 ----
-  function injectModelData(modelName, modelMetrics, yesterdayMetrics, marker) {
-    // 找到页面上对应的模型名 span
-    const modelSpans = document.querySelectorAll('.ds-text.ds-text--monospace');
-    let targetSpan = null;
-    for (const span of modelSpans) {
-      const text = span.textContent.trim();
-      const tLower = text.toLowerCase();
-      const mLower = modelName.toLowerCase();
-      if (tLower.includes(mLower) || mLower.includes(tLower)) {
-        targetSpan = span;
-        break;
-      }
-    }
-    if (!targetSpan) return;
-
-    // 找到 grid 容器
-    const sectionHeader = targetSpan.closest('[class*="_6926780"]') || targetSpan.closest('div');
-    let gridContainer = sectionHeader.nextElementSibling;
-    while (gridContainer && !gridContainer.querySelector('[class*="columns-2"]')) {
-      gridContainer = gridContainer.nextElementSibling;
-    }
-    if (!gridContainer) return;
-
-    const grid = gridContainer.querySelector('[class*="columns-2"]');
-    if (!grid) return;
-
-    const gridItems = grid.querySelectorAll('.ds-grid-item');
-
-    // ---- 列1: 请求次数 ----
-    let requestColumn = null;
-    for (const item of gridItems) {
-      if (item.textContent.includes('API 请求次数') || item.textContent.includes('请求次数')) {
-        requestColumn = item;
-        break;
-      }
-    }
-    if (requestColumn) {
-      injectRequestExtras(requestColumn, modelMetrics.requests,
-        yesterdayMetrics ? yesterdayMetrics.requests : 0, marker);
-    }
-
-    // ---- 列2: Tokens ----
-    let tokenColumn = null;
-    for (const item of gridItems) {
-      const labels = item.querySelectorAll('.ds-text--lsp');
-      for (const lbl of labels) {
-        if (lbl.textContent.trim() === 'Tokens') {
-          tokenColumn = item;
-          break;
-        }
-      }
-      if (tokenColumn) break;
-    }
-    if (tokenColumn) {
-      injectTokenToday(tokenColumn, modelMetrics, marker);
-    }
-  }
-
-  // 创建一行：label（与 API 请求次数/Tokens 同款）+ value（与数值同款）
-  function makeInjectRow(labelText, valueText) {
-    const row = document.createElement('div');
-    row.className = 'ds-flex';
-    row.style.cssText = 'align-items:baseline;gap:12px;';
-
-    const label = document.createElement('span');
-    label.className = 'ds-text ds-text--fsp ds-text--lsp';
-    label.textContent = labelText;
-
-    const value = document.createElement('span');
-    value.className = 'ds-text ds-text--label2';
-    value.textContent = valueText;
-
-    row.appendChild(label);
-    row.appendChild(value);
-    return row;
-  }
-
-  function injectRequestExtras(column, todayRequests, yesterdayRequests, marker) {
-    // 找到 "API 请求次数" label 的那一行
-    const labels = column.querySelectorAll('.ds-text--lsp');
-    let labelRow = null;
-    for (const lbl of labels) {
-      if (lbl.textContent.includes('请求次数')) {
-        labelRow = lbl.closest('.ds-flex');
-        break;
-      }
-    }
-    if (!labelRow) return;
-
-    const stack = labelRow.parentElement;
-
-    // 昨日请求次数（在今日上方）
-    const rowY = makeInjectRow('昨日请求次数', yesterdayRequests.toLocaleString());
-    rowY.setAttribute(INJECT_MARKER, marker);
-    stack.insertBefore(rowY, labelRow.nextSibling);
-
-    // 今日请求次数
-    const rowT = makeInjectRow('今日请求次数', todayRequests.toLocaleString());
-    rowT.setAttribute(INJECT_MARKER, marker);
-    stack.insertBefore(rowT, rowY.nextSibling);
-  }
-
-  function injectTokenToday(column, metrics, marker) {
-    // 1. 把 "Tokens" label 改成 "本月总Tokens"
-    const labels = column.querySelectorAll('.ds-text--lsp');
-    let tokenLabelEl = null;
-    for (const lbl of labels) {
-      if (lbl.textContent.trim() === 'Tokens') {
-        lbl.textContent = '本月总Tokens';
-        tokenLabelEl = lbl;
-        break;
-      }
-    }
-    if (!tokenLabelEl) return;
-
-    // 找到 token label 那一行 → 垂直 stack
-    const tokenRow = tokenLabelEl.closest('.ds-flex');
-    if (!tokenRow) return;
-    const stack = tokenRow.parentElement;
-
-    // 2. 今日总Tokens
-    const totalVal = metrics.tokens ? metrics.tokens.total.toLocaleString() : '0';
-    const row1 = makeInjectRow('今日总Tokens', totalVal);
-    row1.setAttribute(INJECT_MARKER, marker);
-
-    // 3. 缓存命中率
-    const rate = metrics.cache_hit_rate !== null && metrics.cache_hit_rate !== undefined
-      ? metrics.cache_hit_rate.toFixed(1) + '%' : '—';
-    const row2 = makeInjectRow('今日缓存命中率', rate);
-    row2.setAttribute(INJECT_MARKER, marker);
-
-    // 插入到 tokenRow 后面（图表 div 前面）
-    let insertAfter = tokenRow;
-    stack.insertBefore(row1, insertAfter.nextSibling);
-    stack.insertBefore(row2, row1.nextSibling);
-  }
-
-  // ---- 图表 tooltip 数字千分位 ----
-  function setupTooltipFormatter() {
-    const formatNumber = (text) => {
-      return text.replace(/\b(\d{4,})\b/g, (_, n) => Number(n).toLocaleString());
+    const isTooltipLayer = node => {
+      if (node.nodeType !== 1) return false;
+      const style = node.style;
+      return style.position === 'absolute' && parseInt(style.zIndex || '0', 10) >= 1000;
     };
-
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
+    const obs = new MutationObserver(muts => {
+      for (const m of muts) {
         for (const node of m.addedNodes) {
           if (node.nodeType !== 1) continue;
-          // 处理任何包含大数字的新增元素（ECharts tooltip 内层 div 也覆盖）
-          if (/\d{4,}/.test(node.textContent)) {
-            formatTooltipText(node, formatNumber);
-            node.querySelectorAll('*').forEach(el => {
-              if (!el._dsFormatted && /\d{4,}/.test(el.textContent)) {
-                formatTooltipText(el, formatNumber);
-              }
-            });
-          }
-        }
-        if (m.type === 'characterData' && m.target.parentElement) {
-          const el = m.target.parentElement;
-          if (!el._dsFormatted && /\d{4,}/.test(el.textContent)) {
-            formatTooltipText(el, formatNumber);
-          }
+          if (isTooltipLayer(node)) formatNode(node);
+          else if (node.closest && node.closest('[data-usage-layout-root]')) formatNode(node);
         }
       }
     });
-
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    log('已启用图表数字千分位格式化');
+    // 注意：document-start 阶段 documentElement 可能尚不存在，延迟到 DOM 就绪再观察
+    const startObserve = () => obs.observe(document.documentElement, { childList: true, subtree: true });
+    if (document.documentElement) {
+      startObserve();
+    } else {
+      document.addEventListener('DOMContentLoaded', startObserve);
+    }
+    log('tooltip 千分位安全网已启用');
   }
 
-  function formatTooltipText(root, formatter) {
-    if (root._dsFormatted) return;
-    root._dsFormatted = true;
+  // ============================================================
+  // 注入调度
+  // ============================================================
+  let injectTimer = null;
+  function scheduleInject() {
+    if (injectTimer) return;
+    injectTimer = setTimeout(() => {
+      injectTimer = null;
+      tryInject();
+    }, 60);
+  }
 
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    const nodes = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-
-    for (const node of nodes) {
-      const orig = node.textContent;
-      const formatted = formatter(orig);
-      if (formatted !== orig) {
-        node.textContent = formatted;
-      }
+  function tryInject() {
+    if (!document.body || !lang) return;
+    const data = computeToday();
+    if (!data.cost && !data.amount) {
+      ensureTodayData();   // 数据未覆盖今日 -> 自请求
+      return;
     }
+    if (data.amount) injectPerModelRows(data);
+    if (data.cost || data.amount) injectTodayCards(data);
   }
 
   // ============================================================
   // 启动
   // ============================================================
   function init() {
-    log('DeepSeek Usage Enhancer 已加载');
+    log('DeepSeek Usage Enhancer v2.0.0 已加载');
+    installInterceptors();
+    installTooltipFormatter();
 
     let pollFast = true;
     let pollCount = 0;
 
     function poll() {
       pollCount++;
-      tryAllInjections();
-
-      // 初始阶段每 500ms 快速轮询；稳定后降到 3s
-      if (pollFast && pollCount > 20) {
-        pollFast = false;
+      // 语言探测每轮刷新（body class 出现较晚，允许更正，避免锁死错误语言）
+      const dl = detectLang();
+      if (dl) lang = dl;
+      // URL 门控：从官网进入时首载为平台首页 /，SPA 路由到 /usage 前不注入
+      if (!lang || !location.pathname.startsWith('/usage')) { /* 等 SPA 路由 / 页面就绪 */ }
+      else {
+        tryInject();
+        ensureTodayData();   // 每轮兜底检查
       }
+      if (pollFast && pollCount > 24) pollFast = false;
       setTimeout(poll, pollFast ? 500 : 3000);
     }
 
-    // 切换标签页回来时，如果注入标记丢失（React 重绘），立即补注
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         pollCount = 0;
         pollFast = true;
-        tryAllInjections();
+        poll();
       }
     });
 
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(poll, 800);
-      });
+      document.addEventListener('DOMContentLoaded', () => setTimeout(poll, 300));
     } else {
-      setTimeout(poll, 800);
+      setTimeout(poll, 300);
     }
   }
 
-  init();
+  try {
+    init();
+  } catch (e) {
+    console.error('[DSUE] init 异常:', e);
+  }
 })();
