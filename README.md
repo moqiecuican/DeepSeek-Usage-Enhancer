@@ -1,10 +1,10 @@
-# DeepSeek 用量增强（DeepSeek Usage Enhancer）
+# DeepSeek 用量显示优化（DeepSeek Usage Panorama）
 
 > 油猴脚本 / Tampermonkey 用户脚本，为 [DeepSeek 开放平台](https://platform.deepseek.com/usage) 用量页补全**今日数据**：今日消费、今日用量、各模型今日/昨日请求次数与缓存命中率。注入内容**克隆官方原生卡片样式**，与页面融为一体，以假乱真。
 
 ![注入+悬浮](docs/注入+悬浮.png)
 
-[![GitHub release](https://img.shields.io/github/v/release/moqiecuican/DeepSeek-Usage-Enhancer)](https://github.com/moqiecuican/DeepSeek-Usage-Enhancer/releases)
+[![GitHub release](https://img.shields.io/github/v/release/moqiecuican/DeepSeek-Usage-Panorama)](https://github.com/moqiecuican/DeepSeek-Usage-Panorama/releases)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
@@ -43,7 +43,7 @@
 
 两个版本功能互补，**选一个安装即可**，也可以同时安装（如上图同屏效果）。
 
-### 页面注入版（DeepSeek-Usage-Enhancer.js）
+### 页面注入版（DeepSeek-Usage-Panorama.js）
 
 数据直接注入页面原生布局，与官方 UI 完全一致：
 
@@ -72,7 +72,7 @@
    - ▶️ [安装「DeepSeek 用量显示优化」（页面注入版）](https://greasyfork.org/zh-CN/scripts/591209-deepseek-usage-enhancer)
    - ▶️ [安装「DeepSeek 用量监控悬浮窗」（悬浮面板版）](https://greasyfork.org/zh-CN/scripts/591210-deepseek-usage-monitor)
    - 两个版本功能互补，**选一个即可**，也可同时安装
-   - 备用直链：<https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Enhancer/main/DeepSeek-Usage-Enhancer.user.js> / `deepseek-usage-monitor.user.js`
+   - 备用直链：<https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Panorama/main/DeepSeek-Usage-Panorama.user.js> / `deepseek-usage-monitor.user.js`
 3. 手动安装：打开扩展管理页 → **添加新脚本** → 粘贴对应 `.js` 文件的全部内容 → 保存
 4. 打开 [DeepSeek 开放平台用量页](https://platform.deepseek.com/usage)（或从官网"API 开放平台"进入），脚本自动生效
 
