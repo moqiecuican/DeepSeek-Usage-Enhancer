@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         DeepSeek Usage Enhancer
+// @name:zh-CN   DeepSeek 用量显示优化
 // @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
-// @version      2.0.7
+// @version      2.0.8
 // @description  在 DeepSeek 开放平台用量页注入今日数据：今日消费、今日用量、各模型今日/昨日请求数与缓存命中率（原生克隆，以假乱真）
 // @author       Jmkwang, Kiming, moqiecuican
 // @match        https://platform.deepseek.com/*
 // @run-at       document-start
 // @grant        none
 // @updateURL     https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Enhancer/main/DeepSeek-Usage-Enhancer.user.js
+// @license      MIT
 // @downloadURL   https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Enhancer/main/DeepSeek-Usage-Enhancer.user.js
 // ==/UserScript==
 

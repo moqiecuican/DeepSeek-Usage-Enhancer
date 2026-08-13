@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         DeepSeek Usage Monitor
+// @name:zh-CN   DeepSeek 用量监控悬浮窗
 // @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
-// @version      2.0.2
+// @version      2.0.3
 // @description  在 DeepSeek 开放平台用量页右下角展示悬浮面板：今日消费/今日用量/余额/各模型明细与缓存命中率（DeepSeek 设计语言）
 // @author       Jmkwang, Kiming, moqiecuican
 // @match        https://platform.deepseek.com/*
 // @run-at       document-start
 // @grant        none
+// @license      MIT
 // ==/UserScript==
 
 /**
