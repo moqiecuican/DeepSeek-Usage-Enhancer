@@ -69,8 +69,8 @@
    - Chrome / Edge：应用商店搜索 "Tampermonkey"
    - Firefox：附加组件商店
 2. **一键安装**（推荐，点击后油猴会自动弹出安装确认）：
-   - ▶️ [安装「DeepSeek 用量显示优化」（页面注入版）](https://greasyfork.org/zh-CN/scripts/591209-deepseek-usage-enhancer)
-   - ▶️ [安装「DeepSeek 用量监控悬浮窗」（悬浮面板版）](https://greasyfork.org/zh-CN/scripts/591210-deepseek-usage-monitor)
+   - ▶️ [安装「DeepSeek 用量显示优化」（页面注入版）](https://greasyfork.org/zh-CN/scripts/591209-deepseek-usage-panorama)
+   - ▶️ [安装「DeepSeek 用量监控悬浮窗」（悬浮面板版）](https://greasyfork.org/zh-CN/scripts/591210-deepseek-usage-panorama-monitor)
    - 两个版本功能互补，**选一个即可**，也可同时安装
    - 备用直链：<https://raw.githubusercontent.com/moqiecuican/DeepSeek-Usage-Panorama/main/DeepSeek-Usage-Panorama.user.js> / `deepseek-usage-monitor.user.js`
 3. 手动安装：打开扩展管理页 → **添加新脚本** → 粘贴对应 `.js` 文件的全部内容 → 保存

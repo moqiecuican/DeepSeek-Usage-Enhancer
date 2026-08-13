@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek Usage Panorama Monitor
 // @name:zh-CN   DeepSeek 用量监控悬浮窗
-// @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Panorama
+// @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
 // @version      2.0.4
 // @description  在 DeepSeek 开放平台用量页右下角展示悬浮面板：今日消费/今日用量/余额/各模型明细与缓存命中率（DeepSeek 设计语言）
 // @author       Jmkwang, Kiming, moqiecuican
