@@ -2,7 +2,7 @@
 // @name         DeepSeek Usage Panorama
 // @name:zh-CN   DeepSeek 用量显示优化
 // @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
-// @version      2.0.9
+// @version      2.1.1
 // @description  在 DeepSeek 开放平台用量页注入今日数据：今日消费、今日用量、各模型今日/昨日请求数与缓存命中率（原生克隆，以假乱真）
 // @author       Jmkwang, Kiming, moqiecuican
 // @match        https://platform.deepseek.com/*
@@ -45,13 +45,13 @@
   const L = {
     zh: {
       todayCost: '今日消费', todayUsage: '今日用量',
-      today: '今日', yesterday: '昨日', cacheHitRate: '缓存命中率',
+      today: '今日', yesterday: '昨日', cacheHitRate: '今日缓存命中率',
       cardCost: '消费金额', cardTokens: 'Tokens',
       metricRequests: ['API 请求次数', '请求次数'], metricTokens: ['Tokens'],
     },
     en: {
       todayCost: "Today's cost", todayUsage: 'Today usage',
-      today: 'Today', yesterday: 'Yesterday', cacheHitRate: 'Cache hit rate',
+      today: 'Today', yesterday: 'Yesterday', cacheHitRate: "Today's cache hit rate",
       cardCost: ['Cost'], cardTokens: ['Tokens'],
       metricRequests: ['Requests', 'API Requests'], metricTokens: ['Tokens'],
     },
@@ -409,12 +409,26 @@
 
   /** 从指标头向上找所属模型（数据动态下发，不能硬编码模型名） */
   function findModelFor(headerEl, models) {
+    // v4-pro 加入后，模型名标题与指标图是「相邻兄弟」（模型组容器内并列多模型），
+    // 旧逻辑向上找「唯一含模型名的容器」会撞上含多模型名的容器 → 歧义 → 全灭。
+    // 新逻辑：从指标头逐层向上，找「前一个兄弟元素文本精确等于某模型名」。
     let el = headerEl.parentElement;
+    while (el && el !== document.body) {
+      let sib = el.previousElementSibling;
+      while (sib) {
+        const t = (sib.textContent || '').trim();
+        const hit = models.find(m => m && t === m);
+        if (hit) return hit;
+        sib = sib.previousElementSibling;
+      }
+      el = el.parentElement;
+    }
+    // 兜底：旧逻辑（向上找唯一含模型名的容器）
+    el = headerEl.parentElement;
     while (el && el !== document.body) {
       const txt = el.textContent || '';
       const hits = models.filter(m => m && txt.includes(m));
       if (hits.length === 1 && el.children.length <= 20) return hits[0];
-      if (hits.length > 1) return null;   // 歧义（容器含多模型名），放弃
       el = el.parentElement;
     }
     return null;
@@ -473,8 +487,10 @@
   }
 
   /**
-   * 图表 tooltip 千分位（安全网版）：
-   * 新平台原生已对 tooltip 的金额/Token 做千分位，此观察器只兜底未格式化的场景。
+   * 图表 tooltip 增强（v2.1.0）：
+   * 1) 千分位安全网（v2.0.9）：新平台原生已对 tooltip 的金额/Token 做千分位，此观察器只兜底未格式化的场景。
+   * 2) 缓存命中率注入：官方 tooltip 无命中率，此处按 tooltip 日期从拦截数据算当日命中率，
+   *    在系列行末尾追加「缓存命中率 xx.x%」（深色 UI 下文案仍是中文/英文跟随页面语言）。
    * 只处理：(a) data-usage-layout-root 内新增节点；(b) 绝对定位的 tooltip 层。
    * 正则排除日期（2026-08-13）与已格式化数字（1,234）。
    */
@@ -499,13 +515,68 @@
       const style = node.style;
       return style.position === 'absolute' && parseInt(style.zIndex || '0', 10) >= 1000;
     };
+    /** 向 Tokens 图 tooltip 追加/更新「缓存命中率」行（tooltip 层是持久复用的，内容随日期变化） */
+    const injectRate = node => {
+      const txt = node.innerText || '';
+      if (!/(输入（命中缓存）|Input \(cache hit\))/.test(txt)) return;
+      // 找系列 label 行（结构：1 个 12px 色块 div + 1 个文本节点，childElementCount === 1）
+      const findLabel = name => [...node.querySelectorAll('div')].find(d =>
+        d.childElementCount === 1 && d.children[0] && d.children[0].style &&
+        d.children[0].style.width === '12px' && d.textContent.trim() === name);
+      const labelHit = findLabel('输入（命中缓存）') || findLabel('Input (cache hit)');
+      const labelMiss = findLabel('输入（未命中缓存）') || findLabel('Input (cache miss)');
+      const labelRow = findLabel('输出') || findLabel('Output');
+      if (!labelHit || !labelMiss || !labelRow) return;
+      const col = labelRow.parentElement;                 // 左列（label）
+      const wrap = col.parentElement;
+      const rightCol = [...wrap.children].find(c => c !== col);  // 右列（数值）
+      if (!rightCol) return;
+      // 命中率 = 当前模型「输入（命中缓存）/（命中+未命中）」，直接用 tooltip 显示的数值。
+      // 左列与右列 index 一一对应（日期行右列也有值=总 token），故 value = 右列同 index。
+      const parseNum = s => { const t = String(s || '').replace(/[^\d.]/g, ''); if (!t) return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
+      const valOf = label => { const idx = [...col.children].indexOf(label); return rightCol.children[idx] ? parseNum(rightCol.children[idx].textContent) : null; };
+      const hit = valOf(labelHit);
+      const miss = valOf(labelMiss);
+      // 该模型当天无使用（命中+未命中=0）→ 不注入，避免给未使用的模型编造命中率
+      if (hit === null || miss === null || hit + miss === 0) return;
+      const rate = hit / (hit + miss) * 100;
+      const rateLabel = lang === 'en' ? 'Cache hit rate' : '缓存命中率';
+      const rateText = rate.toFixed(1) + '%';
+      // 防重复：已有「缓存命中率」行则仅更新值（tooltip 复用 + 日期切换）
+      // 注意：值相同则不写 DOM，否则 textContent 变化会再次触发 MutationObserver → 死循环
+      const existing = [...col.children].find(d => d.textContent.trim() === rateLabel);
+      if (existing) {
+        const valEl = rightCol.lastElementChild;  // 命中率值在右列末尾
+        if (valEl && valEl.textContent !== rateText) valEl.textContent = rateText;
+        return;
+      }
+      const newLabel = labelRow.cloneNode(true);
+      const chip = newLabel.children[0];
+      if (chip) { chip.style.background = '#3964FE'; chip.style.borderRadius = '50%'; }
+      newLabel.lastChild.textContent = rateLabel;
+      col.appendChild(newLabel);
+      const newVal = rightCol.lastElementChild ? rightCol.lastElementChild.cloneNode(true) : null;
+      if (newVal) { newVal.textContent = rateText; rightCol.appendChild(newVal); }
+      log('tooltip 注入命中率: ' + rateText);
+    };
+    const isInsideTooltip = node => {
+      let el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+      while (el && el !== document.body) {
+        if (isTooltipLayer(el)) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
     const obs = new MutationObserver(muts => {
       for (const m of muts) {
         for (const node of m.addedNodes) {
           if (node.nodeType !== 1) continue;
-          if (isTooltipLayer(node)) formatNode(node);
+          if (isTooltipLayer(node)) { formatNode(node); injectRate(node); }
           else if (node.closest && node.closest('[data-usage-layout-root]')) formatNode(node);
         }
+        // tooltip 层是持久复用的（内容随日期变化），须在内容变化时重新注入/更新命中率
+        const tip = isInsideTooltip(m.target);
+        if (tip) injectRate(tip);
       }
     });
     // 注意：document-start 阶段 documentElement 可能尚不存在，延迟到 DOM 就绪再观察
@@ -517,6 +588,7 @@
     }
     log('tooltip 千分位安全网已启用');
   }
+
 
   // ============================================================
   // 注入调度
@@ -545,7 +617,7 @@
   // 启动
   // ============================================================
   function init() {
-    log('DeepSeek Usage Enhancer v2.0.0 已加载');
+    log('DeepSeek Usage Enhancer v2.1.0 已加载');
     installInterceptors();
     installTooltipFormatter();
 

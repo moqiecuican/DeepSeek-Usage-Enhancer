@@ -2,7 +2,7 @@
 // @name         DeepSeek Usage Panorama Monitor
 // @name:zh-CN   DeepSeek 用量监控悬浮窗
 // @namespace    https://github.com/moqiecuican/DeepSeek-Usage-Enhancer
-// @version      2.0.4
+// @version      2.0.5
 // @description  在 DeepSeek 开放平台用量页右下角展示悬浮面板：今日消费/今日用量/余额/各模型明细与缓存命中率（DeepSeek 设计语言）
 // @author       Jmkwang, Kiming, moqiecuican
 // @match        https://platform.deepseek.com/*
@@ -488,8 +488,12 @@
       #${PANEL_ID} .dsm-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
       #${PANEL_ID} .dsm-title { font-size: 13px; font-weight: 600; flex: 1; }
       #${PANEL_ID} .dsm-toggle {
+        position: relative;
         cursor: pointer; font-size: 14px; width: 20px; text-align: center;
         border-radius: 6px; line-height: 1.4; opacity: .7;
+      }
+      #${PANEL_ID} .dsm-toggle::before {
+        content: ''; position: absolute; inset: -8px;
       }
       #${PANEL_ID} .dsm-toggle:hover { opacity: 1; }
       #${PANEL_ID} .dsm-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
